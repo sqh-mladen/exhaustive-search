@@ -5,9 +5,27 @@
 #include <gsl/gsl_multiset.h>
 
 #define MAX_POWER 10
-#define MAX_PRIME 4
+#define MAX_LENGTH 4
+#define MAX_PRIME 7
 
-int primes[] = { 2, 3, 5, 7, 11 };
+mpz_t * primes;
+
+void es_util_init_primes(mpz_t start, unsigned int l) {
+	size_t i;
+	mpz_t prime;
+	
+	mpz_init_set(prime, start);
+	
+	free(primes);
+	primes = malloc(l * sizeof(mpz_t));
+		
+	for (i = 0; i < l; i++) {
+		mpz_init(primes[i]);
+		mpz_set(primes[i], prime);
+		mpz_nextprime(prime, prime);
+	}
+	mpz_clear(prime);
+}
 
 /**
  * Compute the order of the group
@@ -16,44 +34,108 @@ int primes[] = { 2, 3, 5, 7, 11 };
  */
 void es_util_compute_order(mpz_t order, gsl_multiset * c) {
 	size_t i, l = gsl_multiset_k(c);	
-	mpz_t power, prime;
+	mpz_t power;
 
-	mpz_inits(power, prime, NULL);
-
+	mpz_init(power);
 	mpz_set_ui(order, 1);
-	mpz_set_ui(prime, 2);
 
 	for (i = 0; i < l; i++) {
-		mpz_pow_ui(power, prime, gsl_multiset_get(c, i));
-		mpz_nextprime(prime, prime);
+		mpz_pow_ui(power, primes[i], gsl_multiset_get(c, (l - i - 1)));
 		mpz_mul(order, order, power);
 	}
 
-	mpz_clears(power, prime, NULL);
+	mpz_clear(power);
 }
 
-void es_check(mpz_t divisor, mpz_t order) {
+void es_util_print_solution(gsl_multiset *c, gsl_vector *v) {
+	size_t i, l = gsl_multiset_k(c);
+	unsigned long n;
+	
+	printf("G: ");
+	for (i = 0; i < l; i++) {
+		n = (unsigned int)gsl_multiset_get(c, (l - i - 1));
+		if (n > 0) {
+			gmp_printf("%Zd^%d", primes[i], n);
+			if (l - i > 1) printf("*");
+		}
+	}
+	printf(", S: ");
+	for(i = 0, l = v->size; i < l; i++) {
+		n = (unsigned int)gsl_vector_get(v, (l - i -1));
+		if (n > 0) {
+			gmp_printf("%Zd^%d", primes[i], n);
+			if (l - i > 1) printf("*");
+		}
+	}
+	printf("\n");
+}
 
-} 
+/**
+ * Process found solution.
+ */
+void es_found(gsl_multiset *c, gsl_vector *v, mpz_t order, mpz_t divisor) {
+	es_util_print_solution(c, v);
+}
 
-void es_callback(mpz_t order, gsl_vector * v) {
-	size_t i;
+/**
+ * Check for a solution.
+ */
+int es_check(mpz_t order, mpz_t divisor) {
+	// Check if trivial solution.
+	if (mpz_cmp(order, divisor) <= 0) {
+		goto end;
+	}
+	
+	mpz_t t, r, d;
+	
+	mpz_inits(t, r, d, NULL);
+	
+	mpz_add_ui(d, divisor, 1);
+	mpz_mul(t, divisor, d);
+	mpz_mod(r, t, order);
+	
+	// Check if test product is divisible by combination.
+	if (mpz_cmp_ui(r, 0) == 0) {
+			mpz_divexact(t, t, order);
+			mpz_mod_ui(r, t, 2);
+			// Check if test product is even.
+			if (mpz_cmp_ui(r, 0) == 0) {
+				// Check if test product is a perfect power.
+				if (mpz_perfect_power_p(t) != 0) {
+						// Found a solution.
+						return 1;
+				}
+			}
+	}
+	end:
+	return 0;
+}
+
+/**
+ * Callback for the computation.
+ */
+void es_callback(gsl_multiset *c, mpz_t order, gsl_vector * v) {
+	size_t i, l;
 	mpz_t prime_power, product;
 
-	mpz_init(prime_power);
-	mpz_init(product);
+	mpz_inits(prime_power, product, NULL);
 	mpz_set_ui(product, 1);
-	for (i = 0; i < v->size; i++) {
-		mpz_ui_pow_ui(prime_power, (unsigned int)primes[i], (unsigned int)gsl_vector_get(v, i));
+	
+	for (i = 0, l = v->size; i < l; i++) {
+		mpz_pow_ui(prime_power, primes[i], (unsigned int)gsl_vector_get(v, (l - i - 1)));
 		mpz_mul(product, product, prime_power);
 	}
 
-	gmp_printf(": %Zd\n", product);
+	if (es_check(order, product)) {
+		es_found(c, v, order, product);
+	}
+	
+	//gmp_printf(": %Zd\n", product);
 	mpz_clear(prime_power);
 	mpz_clear(product);
 }
 
-void es_run_combinations(gsl_combination * c[], size_t size, mpz_t order, void (*callback)(gsl_vector *)) {
+void es_run_combinations(gsl_multiset *ms, gsl_combination * c[], size_t size, mpz_t order, void (*callback)(gsl_multiset *, mpz_t, gsl_vector *)) {
 	size_t max = size - 1;
 
 	gsl_vector * v = gsl_vector_alloc(size);
@@ -64,7 +146,7 @@ void es_run_combinations(gsl_combination * c[], size_t size, mpz_t order, void (
 			gsl_vector_set(v, pos, gsl_combination_get(c[pos], j));
 
 			if (pos == max) {
-				callback(order, v);
+				callback(ms, order, v);
 			} else {
 				combinations(v, pos + 1);
 			}
@@ -75,44 +157,63 @@ void es_run_combinations(gsl_combination * c[], size_t size, mpz_t order, void (
 }
 
 
-void es_fork(gsl_multiset * c) {
+int es_fork(gsl_multiset * c) {
 	size_t i, j, l = gsl_multiset_k(c);
-
 	mpz_t order;
+	
 	mpz_init(order);
+	
 	es_util_compute_order(order, c);
-	gmp_printf("Order: %Zd\n", order);
 
 	gsl_combination * list[l];
 	for (i = 0; i < l; i++) {
 		j = gsl_multiset_get(c, i);
+		if (j == 0) goto exit;
 		list[i] = gsl_combination_calloc((j+1), (j+1));
 	}
-	printf ("{");
-        gsl_multiset_fprintf (stdout, c, " %u");
-        printf (" }\n");
-
-	es_run_combinations(list, l, order, es_callback);
+	
+	//printf ("{");
+    //gsl_multiset_fprintf (stdout, c, " %u");
+    //printf (" }\n");
+	
+	
+	es_run_combinations(c, list, l, order, es_callback);
+	
+	exit:
+	return 0;
 }
 
+/**
+ * Start the computation.
+ */
 void es_start(void) {
-	size_t i;
+	size_t i, j;
+	mpz_t prime;
 	gsl_multiset * c;
+
+	mpz_init_set_ui(prime, 2);
 
 	/* Run through all combinations of powers.
 	 */
 	for (i = 1; i <= MAX_PRIME; i++) {
-		c = gsl_multiset_calloc(MAX_POWER, i);
-		do {
-			// fork on a combination
-			es_fork(c);
-		} while (gsl_multiset_next(c) == GSL_SUCCESS);
-		gsl_multiset_free(c);
+		// Initialisations.
+		es_util_init_primes(prime, MAX_LENGTH);
+		mpz_nextprime(prime, prime);
+		
+		for (j = 1; j <= MAX_LENGTH; j++) {
+			// Allocate a multiset of j-th order.
+			c = gsl_multiset_calloc(MAX_POWER, j);
+			do {
+				// Fork on a combination.
+				es_fork(c);
+			} while (gsl_multiset_next(c) == GSL_SUCCESS);
+			gsl_multiset_free(c);
+		}
 	}
 }
 
 int main(void) {
 	/* Get going.
-         */
+	 */
 	es_start();
 }
