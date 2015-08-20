@@ -7,10 +7,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include <gmp.h>
-#include <gsl/gsl_vector.h>
-#include <gsl/gsl_combination.h>
-#include <gsl/gsl_multiset.h>
+#include "gmp.h"
+#include "gsl/gsl_vector.h"
+#include "gsl/gsl_combination.h"
+#include "gsl/gsl_multiset.h"
 
 #define MAX_POWER 10
 
@@ -290,18 +290,14 @@ void es_start(struct es_settings s) {
 		// Prepare the sequence of primes.
 		es_util_init_primes(prime, MAX_LENGTH);
 		
-		#pragma omp parallel private(j), private(c)
-		{
-			#pragma omp parallel for
-			for (j = s.min_length; j <= s.max_length; j++) {
-				// Allocate a combination of j-th order.
-				c = gsl_multiset_calloc(MAX_POWER, j);
-				do {
-					// Fork on a combination.
-					es_fork(c);
-				} while (gsl_multiset_next(c) == GSL_SUCCESS);
-				gsl_multiset_free(c);
-			}
+		for (j = s.min_length; j <= s.max_length; j++) {
+			// Allocate a combination of j-th order.
+			c = gsl_multiset_calloc(MAX_POWER, j);
+			do {
+				// Fork on a combination.
+				es_fork(c);
+			} while (gsl_multiset_next(c) == GSL_SUCCESS);
+			gsl_multiset_free(c);
 		}
 		
 		es_util_log_status(prime, i, s.max_length);

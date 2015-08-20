@@ -1,0 +1,31 @@
+infnan.lo: infnan.c ../config.h /usr/include/math.h \
+ /shared/ucl/apps/gcc/4.6.3/lib/gcc/x86_64-unknown-linux-gnu/4.6.3/include-fixed/features.h \
+ /usr/include/sys/cdefs.h /usr/include/bits/wordsize.h \
+ /usr/include/gnu/stubs.h /usr/include/gnu/stubs-64.h \
+ /usr/include/bits/huge_val.h /usr/include/bits/mathdef.h \
+ /usr/include/bits/mathcalls.h /usr/include/bits/mathinline.h \
+ ../gsl/gsl_sys.h
+
+../config.h:
+
+/usr/include/math.h:
+
+/shared/ucl/apps/gcc/4.6.3/lib/gcc/x86_64-unknown-linux-gnu/4.6.3/include-fixed/features.h:
+
+/usr/include/sys/cdefs.h:
+
+/usr/include/bits/wordsize.h:
+
+/usr/include/gnu/stubs.h:
+
+/usr/include/gnu/stubs-64.h:
+
+/usr/include/bits/huge_val.h:
+
+/usr/include/bits/mathdef.h:
+
+/usr/include/bits/mathcalls.h:
+
+/usr/include/bits/mathinline.h:
+
+../gsl/gsl_sys.h:
