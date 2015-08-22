@@ -20,8 +20,6 @@
 #define START_PRIME 3
 #define END_PRIME 50
 
-mpz_t * primes;
-
 /**
  * 
  */
@@ -30,6 +28,8 @@ struct es_settings {
 	unsigned int end_prime;
 	unsigned int min_length;
 	unsigned int max_length;
+	// Options.
+	unsigned short verbose;
 };
 
 /**
@@ -39,21 +39,25 @@ struct es_settings {
  * @start: Starting prime number.
  * @l: Length of the sequence.
  */
-void es_util_init_primes(mpz_t start, unsigned int l) {
+void es_util_init_primes(mpz_t primes[], mpz_t start, unsigned int l) {
 	size_t i;
 	mpz_t prime;
 	
 	mpz_init_set(prime, start);
-	
-	free(primes);
-	primes = malloc(l * sizeof(mpz_t));
-		
+			
 	for (i = 0; i < l; i++) {
 		mpz_init(primes[i]);
 		mpz_set(primes[i], prime);
 		mpz_nextprime(prime, prime);
 	}
 	mpz_clear(prime);
+}
+
+void es_util_free_primes(mpz_t primes[], unsigned int l) {
+	size_t i;
+	for (i = 0; i < l; i++) {
+		mpz_clear(primes[i]);
+	}
 }
 
 /**
@@ -63,19 +67,23 @@ void es_util_init_primes(mpz_t start, unsigned int l) {
  * @order: the computed order
  * @c: multiset map for prime powers
  */
-void es_util_compute_order(mpz_t order, gsl_multiset * c) {
+void es_util_compute_order(mpz_t primes[], mpz_t order, gsl_multiset * c) {
 	size_t i, l = gsl_multiset_k(c);	
 	mpz_t power;
 
-	mpz_init(power);
 	mpz_set_ui(order, 1);
 
-	for (i = 0; i < l; i++) {
-		mpz_pow_ui(power, primes[i], gsl_multiset_get(c, (l - i - 1)));
-		mpz_mul(order, order, power);
+	#pragma omp parallel private(power), shared(order)
+	{
+		mpz_init(power);
+		#pragma omp for
+		for (i = 0; i < l; i++) {
+			mpz_pow_ui(power, primes[i], gsl_multiset_get(c, (l - i - 1)));
+			#pragma omp critical
+			mpz_mul(order, order, power);
+		}
+		mpz_clear(power);
 	}
-
-	mpz_clear(power);
 }
 
 void es_util_log_openfile() {
@@ -103,7 +111,7 @@ void es_util_log_status(mpz_t prime, size_t pnumber, unsigned long l) {
 void es_util_log_summary(struct es_settings s) {
 	printf("Batch settings: starting prime %d, length of prime seq %d, "
 		   "min length %d and max length %d.\n", 
-		   s.start_prime, s.end_prime, s.max_length, s.min_length);
+		   s.start_prime, s.end_prime, s.min_length, s.max_length);
 }
 
 /**
@@ -123,7 +131,7 @@ void es_util_print_combination(gsl_multiset *c) {
  * Print formatted solution to standard output.
  * 
  */
-void es_util_print_solution(gsl_multiset *c, gsl_vector *v) {
+void es_util_print_solution(mpz_t primes[], gsl_multiset *c, gsl_vector *v) {
 	size_t i, l = gsl_multiset_k(c);
 	unsigned long n;
 	
@@ -149,8 +157,9 @@ void es_util_print_solution(gsl_multiset *c, gsl_vector *v) {
 /**
  * Process found solution.
  */
-void es_found(gsl_multiset *c, gsl_vector *v, mpz_t order, mpz_t divisor) {
-	es_util_print_solution(c, v);
+void es_found(mpz_t primes[], gsl_multiset *c, gsl_vector *v, mpz_t order, mpz_t divisor) {
+	#pragma omp critical
+	es_util_print_solution(primes, c, v);
 }
 
 /**
@@ -195,20 +204,20 @@ int es_check(mpz_t order, mpz_t divisor) {
  * es_callback:
  * Callback for the computation.
  */
-void es_callback(gsl_multiset *c, mpz_t order, gsl_vector * v) {
-	size_t i, l;
+void es_callback(mpz_t primes[], gsl_multiset *c, mpz_t order, gsl_vector * v) {
+	size_t i, l = v->size;
 	mpz_t prime_power, product;
 
 	mpz_inits(prime_power, product, NULL);
 	mpz_set_ui(product, 1);
-	
-	for (i = 0, l = v->size; i < l; i++) {
+
+	for (i = 0; i < l; i++) {
 		mpz_pow_ui(prime_power, primes[i], (unsigned int)gsl_vector_get(v, (l - i - 1)));
 		mpz_mul(product, product, prime_power);
 	}
 
 	if (es_check(order, product)) {
-		es_found(c, v, order, product);
+		es_found(primes, c, v, order, product);
 	}
 	
 	mpz_clears(prime_power, product, NULL);
@@ -219,7 +228,7 @@ void es_callback(gsl_multiset *c, mpz_t order, gsl_vector * v) {
  * Run through all possibilities for a combination.
  * 
  */
-void es_run_combination(gsl_multiset *ms, gsl_combination * c[], size_t size, mpz_t order, void (*callback)(gsl_multiset *, mpz_t, gsl_vector *)) {
+void es_run_combination(mpz_t primes[], gsl_multiset *ms, gsl_combination * c[], size_t size, mpz_t order, void (*callback)(mpz_t primes[], gsl_multiset *, mpz_t, gsl_vector *)) {
 	size_t max = size - 1;
 
 	gsl_vector * v = gsl_vector_alloc(size);
@@ -230,7 +239,7 @@ void es_run_combination(gsl_multiset *ms, gsl_combination * c[], size_t size, mp
 			gsl_vector_set(v, pos, gsl_combination_get(c[pos], j));
 
 			if (pos == max) {
-				callback(ms, order, v);
+				callback(primes, ms, order, v);
 			} else {
 				combinations(v, pos + 1);
 			}
@@ -248,13 +257,13 @@ void es_run_combination(gsl_multiset *ms, gsl_combination * c[], size_t size, mp
  * 
  * @c: The combination to process.
  */
-int es_fork(gsl_multiset * c) {
+int es_fork(mpz_t primes[], gsl_multiset * c) {
 	size_t i, j, l = gsl_multiset_k(c);
 	mpz_t order;
 	
 	mpz_init(order);
 	
-	es_util_compute_order(order, c);
+	es_util_compute_order(primes, order, c);
 
 	gsl_combination * list[l];
 	for (i = 0; i < l; i++) {
@@ -264,7 +273,7 @@ int es_fork(gsl_multiset * c) {
 	}
 	
 	
-	es_run_combination(c, list, l, order, es_callback);
+	es_run_combination(primes, c, list, l, order, es_callback);
 	
 	exit:
 	mpz_clear(order);
@@ -279,29 +288,41 @@ int es_fork(gsl_multiset * c) {
  */
 void es_start(struct es_settings s) {
 	size_t i, j;
-	mpz_t prime;
-	gsl_multiset * c;
+	mpz_t prime, primes[s.max_length];
 
 	mpz_init_set_ui(prime, s.start_prime);
 
 	/* Run through all combinations of powers.
 	 */
 	for (i = 1; i <= s.end_prime; i++) {
-		// Prepare the sequence of primes.
-		es_util_init_primes(prime, MAX_LENGTH);
-		
-		for (j = s.min_length; j <= s.max_length; j++) {
-			// Allocate a combination of j-th order.
-			c = gsl_multiset_calloc(MAX_POWER, j);
-			do {
-				// Fork on a combination.
-				es_fork(c);
-			} while (gsl_multiset_next(c) == GSL_SUCCESS);
-			gsl_multiset_free(c);
+
+		//#pragma omp parallel private(j)
+		{
+			//#pragma omp single
+			{
+				// Initialise the sequence of primes.
+				es_util_init_primes(primes, prime, s.max_length);
+			}
+
+			//#pragma omp for
+			for (j = s.min_length; j <= s.max_length; j++) {
+				if (s.verbose) printf("Thread %d at %d on iteration %d.\n", omp_get_thread_num(), (int)j, (int)i);
+				// Allocate a combination of j-th order.
+				gsl_multiset * c = gsl_multiset_calloc(MAX_POWER, j);
+				do {
+					// Fork on a combination.
+					es_fork(primes, c);
+				} while (gsl_multiset_next(c) == GSL_SUCCESS);
+				gsl_multiset_free(c);
+				if (s.verbose) printf("Thread %d finished at %d	on %d.\n", omp_get_thread_num(), (int)j, (int)i);				
+			}
 		}
-		
+
+		// Free the memory for primes.
+		es_util_free_primes(primes, s.max_length);
+		// Log the current progress.
 		es_util_log_status(prime, i, s.max_length);
-		
+		// Move to consecutive prime.
 		mpz_nextprime(prime, prime);
 	}
 	
@@ -309,7 +330,7 @@ void es_start(struct es_settings s) {
 }
 
 int main(int argc, char ** argv) {
-	int c, verbose = 0;
+	int c;
 	struct es_settings settings;
 	
 	// Set the defaults.
@@ -340,7 +361,7 @@ int main(int argc, char ** argv) {
 				break;
 			}
 			case 'v': {
-				verbose = 1;
+				settings.verbose = 1;
 				break;
 			}
 			case '?': {
